@@ -16,25 +16,24 @@ Therefore reduce the global memory accesses by a factor of 2 (compared to kernel
 `nvcc -o GEMM.out GEMM.cu && ./GEMM.out`
 # Terminal output
 ```
-hlh@nscc-gz:~/Cuda_pratice/Basic-cuda-kernel/GEMM$ nvcc -o GEMM.out GEMM.cu && ./GEMM.out  
+hlh@nscc-gz:~/Cuda_pratice/Basic-cuda-kernel/GEMM$ nvcc -o GEMM.out GEMM.cu && ./GEMM.out 
+./GEMM.out Starting...
+Using Device 5: NVIDIA A100-PCIE-40GB
+ Starting...
+Kernel 1 start...
+Kernel 1 duration time: 0.633344
+Kernel 2 start...
+Kernel 2 duration time: 0.431104
+Kernel 3 start...
+Kernel 3 duration time: 0.358400
+Host start...
+matrixOnHost done!
+Matrix size=1048576
+Arrays match.
 
-./GEMM.out Starting...  
-Using Device 5: NVIDIA A100-PCIE-40GB  
- Starting...  
-Kernel 1 start...  
-Kernel 1 duration time: 0.644960  
-Kernel 2 start...  
-Kernel 2 duration time: 0.601088  
-Kernel 3 start...  
-Kernel 3 duration time: 0.360448  
-Host start...  
-matrixOnHost done!  
-Matrix size=1048576  
-Arrays match.  
+Matrix size=1048576
+Arrays match.
 
-Matrix size=1048576  
-Arrays match.  
-
-Matrix size=1048576  
+Matrix size=1048576
 Arrays match.
 ```

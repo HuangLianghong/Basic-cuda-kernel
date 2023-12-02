@@ -162,7 +162,7 @@ void matrixMultiply(float *h_C, float *h_A, float *h_B, struct matrixSize mSize)
     dim3 dimGrid2(ceil(mSize.x/32.0),ceil(mSize.y/32.0));
     dim3 dimBlock2(32.0,32.0);
     cudaEventRecord(start,0);
-    matrixMultiplyKernel_v1<<<dimGrid2,dimBlock2>>>(d_C2, d_A, d_B, mSize);
+    matrixMultiplyKernel_v2<<<dimGrid2,dimBlock2>>>(d_C2, d_A, d_B, mSize);
     cudaEventRecord(stop,0);
     cudaEventSynchronize(stop);
     cudaEventElapsedTime(&elapsedTime,start,stop); 
