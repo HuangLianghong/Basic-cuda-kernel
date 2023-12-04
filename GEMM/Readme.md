@@ -37,3 +37,14 @@ Arrays match.
 Matrix size=1048576
 Arrays match.
 ```
+# Performance Breakdown
+I profiled these kernels with nsight compute(ncu). Here are some metrics related to the performance differences.
+| kernel | Global Load | Shared Load | 
+| ------- | ----------- | ----------- |
+| kernel_v1 | 67.11 M | 0| 
+| kernel_v2 | 2.10 M | 41.94 M| 
+| kernel_v3 | 1.57 M | 37.75 M| 
+
+Compared to v1, v2 effectively decreases the load instruction from global memory (~97%).
+And v3 further reduces the load both from global memory and shared memory, because once a tile of matrix M is loaded to shared memory, it can be used to calculate two tile of output matrix.
+So about a quarter of global load instructions are reduced. 
