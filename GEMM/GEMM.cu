@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <time.h>
 #include <math.h>
+#include <cublas_v2.h>
 #include "../common.h"
 
 const int TILE_WIDTH = 32;
@@ -128,7 +129,8 @@ void matrixMultiply(float *h_C, float *h_A, float *h_B, struct matrixSize mSize)
     float elapsedTime;
     float *d_A;
     float *d_B;
-    float *d_C1,*d_C2,*d_C3;
+    float *dh_A, *dh_B;
+    float *d_C1,*d_C2,*d_C3, *d_C4;
     int size = mSize.x * mSize.y * sizeof(float);
     float *h_C1 = (float*)malloc(size);
     float *h_C2 = (float*)malloc(size);
@@ -141,13 +143,19 @@ void matrixMultiply(float *h_C, float *h_A, float *h_B, struct matrixSize mSize)
     CHECK( cudaMalloc((void**)&d_C2,size) );
     CHECK( cudaMalloc((void**)&d_C3,size) );
 
+    CHECK( cudaHostAlloc((void**)&dh_A, size, cudaHostAllocDefault));
+    CHECK( cudaHostAlloc((void**)&dh_B, size, cudaHostAllocDefault));
+    CHECK( cudaMemcpy(dh_A,h_A,size,cudaMemcpyHostToHost) );
+    CHECK( cudaMemcpy(dh_B,h_B,size,cudaMemcpyHostToHost) );
+    CHECK( cudaMalloc((void**)&d_C4,size) );
+
     cudaMemcpy(d_A,h_A,size,cudaMemcpyHostToDevice);
     cudaMemcpy(d_B,h_B,size,cudaMemcpyHostToDevice);
 
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
 
-    printf("Kernel 1 start...\n");
+    printf("Kernel 1 start... (simlest version)\n");
     dim3 dimGrid1(ceil(mSize.x/32.0),ceil(mSize.y/32.0));
     dim3 dimBlock1(32.0,32.0);
     cudaEventRecord(start,0);
@@ -155,10 +163,10 @@ void matrixMultiply(float *h_C, float *h_A, float *h_B, struct matrixSize mSize)
     cudaEventRecord(stop,0);
     cudaEventSynchronize(stop);
     cudaEventElapsedTime(&elapsedTime,start,stop); 
-    printf("Kernel 1 duration time: %f\n",elapsedTime);
+    printf("Kernel 1 duration time: %fms\n",elapsedTime);
 
 
-    printf("Kernel 2 start...\n");
+    printf("Kernel 2 start...(tiling and using shared memory)\n");
     dim3 dimGrid2(ceil(mSize.x/32.0),ceil(mSize.y/32.0));
     dim3 dimBlock2(32.0,32.0);
     cudaEventRecord(start,0);
@@ -166,11 +174,11 @@ void matrixMultiply(float *h_C, float *h_A, float *h_B, struct matrixSize mSize)
     cudaEventRecord(stop,0);
     cudaEventSynchronize(stop);
     cudaEventElapsedTime(&elapsedTime,start,stop); 
-    printf("Kernel 2 duration time: %f\n",elapsedTime);
+    printf("Kernel 2 duration time: %fms\n",elapsedTime);
 
 
 
-    printf("Kernel 3 start...\n");
+    printf("Kernel 3 start...(reducing half memory load of M compared to kernel 2)\n");
     dim3 dimGrid3(ceil(mSize.x/32.0)/2,ceil(mSize.y/32.0));
     dim3 dimBlock3(32.0,32.0);
     cudaEventRecord(start,0);
@@ -178,7 +186,20 @@ void matrixMultiply(float *h_C, float *h_A, float *h_B, struct matrixSize mSize)
     cudaEventRecord(stop,0);
     cudaEventSynchronize(stop);
     cudaEventElapsedTime(&elapsedTime,start,stop); 
-    printf("Kernel 3 duration time: %f\n",elapsedTime);
+    printf("Kernel 3 duration time: %fms\n",elapsedTime);
+
+
+    printf("Kernel 4 start...(direct memory access version of kernel 3)\n");
+    
+    cudaEventRecord(start,0);
+    matrixMultiplyKernel_v3<<<dimGrid3,dimBlock3>>>(d_C4, dh_A, dh_B, mSize);
+    cudaEventRecord(stop,0);
+    cudaEventSynchronize(stop);
+    cudaEventElapsedTime(&elapsedTime,start,stop); 
+    printf("Kernel 4 duration time: %fms\n",elapsedTime);
+
+
+
 
 
     CHECK(cudaDeviceSynchronize());
