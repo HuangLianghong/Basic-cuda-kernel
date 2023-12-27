@@ -9,7 +9,7 @@
 #include "../common.h"
 
 using namespace::std;
-const int Length = 128*1024*1024;
+const int Length = 4*1024*1024;
 
 class HLH_Timer{
 private:
@@ -43,42 +43,42 @@ public:
 void reduceSumOnHost(float* C, float* A)
 {
     float sum = 0;
-    printf("Host recduce sum start...\n");
-    
+    //printf("Host recduce sum start...\n");
     for(int i = 0; i<Length; ++i){
         sum += A[i];
+
     }
-    printf("reduceSumOnHost done!\n");
+    printf("reduceSumOnHost result: %f\n",sum);
     *C = sum;
 }
 
 
-__global__ void reduceSumKernel_baseline(float *C, float *A){
-    float sum = 0;
-    for(int i = 0; i<Length;++i){
-        sum += A[i];
+__global__ void reduceSumKernel_serial(float *C, float *A){
+    if(blockIdx.x == 0 && threadIdx.x ==0){
+        float sum = 0;
+        for(int i = 0; i<Length;++i){
+            sum += A[i];
+        }
+        
+        C[0] = sum;
     }
-    
-    C[0] = sum;
 }
 
-__global__ void reduceSumKernel_Twopass(float* C, float*A){
-    int idx = blockIdx.x*blockDim.x+threadIdx.x;
-    int totalThreadNum = gridDim.x*blockDim.x;
-
-    float sum = 0;
-    for(int i = idx; i<Length; i+=totalThreadNum){
-        sum += A[i];
-    }
-    __shared__ float sharedSum[128];
-    sharedSum[threadIdx.x] = sum;
+__global__ void reduceSumKernel_baseline(float* C, float*A){
+    int idx = threadIdx.x;
+    int i = blockIdx.x*blockDim.x+threadIdx.x;
+    extern __shared__ float shm[1024];
+    shm[idx] = A[i];
     __syncthreads();
-    float parSum = 0;
-    if(threadIdx.x == 0){
-        for(int i = 0; i<blockDim.x;++i){
-            parSum += sharedSum[i]; 
+
+    for(int s = 1; s<blockDim.x; s*=2){
+        if(idx%(2*s) == 0){
+            shm[idx] += shm[idx+s];  
         }
-        atomicAdd(&C[0],parSum);
+        __syncthreads();
+    }
+    if(idx == 0){
+        atomicAdd(&(C[0]), shm[0]);
     }
     
 }
@@ -140,16 +140,16 @@ void reduction(float *h_A){
 
     printf("Kernel 1 start... (Serial version)\n");
     Timer.record_start();
-    reduceSumKernel_baseline<<<1,1>>>(d_C1, d_A);
+    reduceSumKernel_serial<<<1,1>>>(d_C1, d_A);
     Timer.record_end();
 
     cout<<"Kernel 1 duration time:"<< Timer.print_time()<<endl;
 
     
-
+    // Too slow
     printf("Kernel 2 start... (Tow pass version)\n");
     Timer.record_start();
-    reduceSumKernel_baseline<<<32,128>>>(d_C2, d_A);
+    reduceSumKernel_baseline<<<Length/1024,1024>>>(d_C2, d_A);
     Timer.record_end();
 
     cout<<"Kernel 2 duration time:"<< Timer.print_time()<<endl;
@@ -162,7 +162,6 @@ void reduction(float *h_A){
      // check kernel error
     CHECK(cudaGetLastError());
     CHECK(cudaMemcpy(h_C1, d_C1,size,cudaMemcpyDeviceToHost));
-    printf("sum=%f\n",h_C1[0]);
     CHECK(cudaMemcpy(h_C2, d_C2,size,cudaMemcpyDeviceToHost));
     // CHECK(cudaMemcpy(h_C3, d_C3,size,cudaMemcpyDeviceToHost));
     
@@ -196,8 +195,9 @@ int main(int argc, char **argv){
 
     srand(time(NULL));
 	for (int i = 0; i < Length ; i++) {
-        h_A[i] = ((((float)rand() / (float)(RAND_MAX)) * 10));
-        // h_A[i] = 2;
+        // Float type may lead to different answer in reduce_sum when using different algorithms.
+        h_A[i] = ((((float)rand() / (float)(RAND_MAX))));
+        //h_A[i] = 1.0;
 		
 	}
     
