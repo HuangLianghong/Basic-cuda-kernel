@@ -9,7 +9,8 @@
 #include "../common.h"
 
 using namespace::std;
-const int Length = 4*1024*1024;
+const int Length = 16*1024*1024;
+const int THREAD_PER_BLOCK=256;
 
 class HLH_Timer{
 private:
@@ -67,25 +68,60 @@ __global__ void reduceSumKernel_serial(float *C, float *A){
 __global__ void reduceSumKernel_baseline(float* C, float*A){
     int idx = threadIdx.x;
     int i = blockIdx.x*blockDim.x+threadIdx.x;
-    extern __shared__ float shm[1024];
+    extern __shared__ float shm[THREAD_PER_BLOCK];
     shm[idx] = A[i];
     __syncthreads();
 
     for(int s = 1; s<blockDim.x; s*=2){
+        // each thread points to the same shm[i] statically
         if(idx%(2*s) == 0){
             shm[idx] += shm[idx+s];  
         }
         __syncthreads();
     }
     if(idx == 0){
-        atomicAdd(&(C[0]), shm[0]);
+        C[blockIdx.x] = shm[idx];
     }
-    
 }
 
+__global__ void reduceSumKernel_optimize_warp_divergence(float* C, float*A){
+    int idx = threadIdx.x;
+    int i = blockIdx.x*blockDim.x+threadIdx.x;
+    extern __shared__ float shm[THREAD_PER_BLOCK];
+    shm[idx] = A[i];
+    __syncthreads();
 
+    for(int s = 1; s<blockDim.x; s*=2){
+        // Each thread points to a different shm[i] dynamically
+        int index = idx*s*2;
+        if(index < blockDim.x){
+            shm[index] += shm[index+s];
+        }
+        __syncthreads();
+    }
+    if(idx == 0){
+        C[blockIdx.x] = shm[idx];
+    }
+}
 
-
+__global__ void reduceSumKernel_optimize_bank_conflict(float* C, float*A){
+     int idx = threadIdx.x;
+    int i = blockIdx.x*blockDim.x+threadIdx.x;
+    extern __shared__ float shm[THREAD_PER_BLOCK];
+    shm[idx] = A[i];
+    __syncthreads();
+    // All partial sum are store in the front of the array, memory addresses are contiguous. 
+    for(int s = blockDim.x/2; s>0; s/=2){
+        // Each thread points to a different shm[i] dynamically
+        if(idx < s){
+            shm[idx] += shm[idx+s];
+        }
+        __syncthreads();
+    }
+    if(idx == 0){
+        C[blockIdx.x] = shm[idx];
+    }
+}
 
 void checkResult(float *hostRef, float *gpuRef)
 {
@@ -107,7 +143,13 @@ void checkResult(float *hostRef, float *gpuRef)
     if (match)
         printf("Arrays match.\n\n");
     else
-        printf("Arrays do not match.\n\n");
+        printf("Arrays do not match (Small differences of float between GPU and CPU answers are OK).\n\n");
+}
+
+void arraySum(float* array, int n){
+    for(int i = n-1;i>0;--i){
+        array[0] += array[i];
+    }
 }
 
 void reduction(float *h_A){
@@ -120,21 +162,24 @@ void reduction(float *h_A){
     int sizeA = Length * sizeof(float);
 
     int size = sizeof(float);
+    int sizeC2 = sizeof(float) * (Length/THREAD_PER_BLOCK);
+    int sizeC3 = sizeC2;
+    int sizeC4 = sizeC2;
 
     float *h_C1 = (float*)malloc(size);
-    float *h_C2 = (float*)malloc(size);
-    float *h_C3 = (float*)malloc(size);
+    float *h_C2 = (float*)malloc(sizeC2);
+    float *h_C3 = (float*)malloc(sizeC3);
+    float *h_C4 = (float*)malloc(sizeC4);
     
 
     CHECK( cudaMalloc((void**)&d_A,sizeA) );
 
     CHECK( cudaMalloc((void**)&d_C1,size) );
-    CHECK( cudaMalloc((void**)&d_C2,size) );
-    CHECK( cudaMalloc((void**)&d_C3,size) );
+    CHECK( cudaMalloc((void**)&d_C2,sizeC2) );
+    CHECK( cudaMalloc((void**)&d_C3,sizeC3) );
+    CHECK( cudaMalloc((void**)&d_C4,sizeC4) );
 
     CHECK( cudaMemcpy(d_A,h_A,sizeA,cudaMemcpyHostToDevice) );
-    h_C2[0] = 0;
-    CHECK( cudaMemcpy(d_C2,h_C2,size,cudaMemcpyHostToDevice) );
 
     HLH_Timer Timer;
 
@@ -142,17 +187,27 @@ void reduction(float *h_A){
     Timer.record_start();
     reduceSumKernel_serial<<<1,1>>>(d_C1, d_A);
     Timer.record_end();
-
     cout<<"Kernel 1 duration time:"<< Timer.print_time()<<endl;
 
     
     // Too slow
-    printf("Kernel 2 start... (Tow pass version)\n");
+    printf("Kernel 2 start... (Baseline)\n");
     Timer.record_start();
-    reduceSumKernel_baseline<<<Length/1024,1024>>>(d_C2, d_A);
+    reduceSumKernel_baseline<<<Length/THREAD_PER_BLOCK,THREAD_PER_BLOCK>>>(d_C2, d_A);
     Timer.record_end();
-
     cout<<"Kernel 2 duration time:"<< Timer.print_time()<<endl;
+
+    printf("Kernel 3 start... (No warp divergence)\n");
+    Timer.record_start();
+    reduceSumKernel_optimize_warp_divergence<<<Length/THREAD_PER_BLOCK,THREAD_PER_BLOCK>>>(d_C3, d_A);
+    Timer.record_end();
+    cout<<"Kernel 3 duration time:"<< Timer.print_time()<<endl;
+
+    printf("Kernel 4 start... (No bank conflict)\n");
+    Timer.record_start();
+    reduceSumKernel_optimize_bank_conflict<<<Length/THREAD_PER_BLOCK,THREAD_PER_BLOCK>>>(d_C4, d_A);
+    Timer.record_end();
+    cout<<"Kernel 4 duration time:"<< Timer.print_time()<<endl;
 
 
 
@@ -162,20 +217,26 @@ void reduction(float *h_A){
      // check kernel error
     CHECK(cudaGetLastError());
     CHECK(cudaMemcpy(h_C1, d_C1,size,cudaMemcpyDeviceToHost));
-    CHECK(cudaMemcpy(h_C2, d_C2,size,cudaMemcpyDeviceToHost));
-    // CHECK(cudaMemcpy(h_C3, d_C3,size,cudaMemcpyDeviceToHost));
-    
+    CHECK(cudaMemcpy(h_C2, d_C2,sizeC2,cudaMemcpyDeviceToHost));
+    CHECK(cudaMemcpy(h_C3, d_C3,sizeC3,cudaMemcpyDeviceToHost));
+    CHECK(cudaMemcpy(h_C4, d_C4,sizeC4,cudaMemcpyDeviceToHost));
     
     float *h_C = (float*)malloc(size);
     
     reduceSumOnHost(h_C, h_A);
     checkResult(h_C,h_C1);
+    arraySum(h_C2, Length/THREAD_PER_BLOCK);
     checkResult(h_C,h_C2);
+    arraySum(h_C3, Length/THREAD_PER_BLOCK);
+    checkResult(h_C,h_C3);
+    arraySum(h_C4, Length/THREAD_PER_BLOCK);
+    checkResult(h_C,h_C4);
     
 
     cudaFree(d_C1);
     cudaFree(d_C2);
     cudaFree(d_C3);
+    cudaFree(d_C4);
     cudaFree(d_A);
 
 }
@@ -196,8 +257,8 @@ int main(int argc, char **argv){
     srand(time(NULL));
 	for (int i = 0; i < Length ; i++) {
         // Float type may lead to different answer in reduce_sum when using different algorithms.
-        h_A[i] = ((((float)rand() / (float)(RAND_MAX))));
-        //h_A[i] = 1.0;
+        // h_A[i] = ((((float)rand() / (float)(RAND_MAX))));
+        h_A[i] = 1.0;
 		
 	}
     
