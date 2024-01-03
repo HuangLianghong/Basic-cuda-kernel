@@ -1,0 +1,1 @@
+# profile command: `ncu --set full -o ./profile --force-overwrite ./Reduce_sum.out` p.s. profiling serial kernal is really slow.

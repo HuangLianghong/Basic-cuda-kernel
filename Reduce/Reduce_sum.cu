@@ -10,7 +10,7 @@
 #include "../common.h"
 
 using namespace::std;
-const int Length = 16*1024*1024;
+const int Length = 32*1024*1024;
 const int THREAD_PER_BLOCK=256;
 const int NEW_THREAD_PER_BLOCK=128;
 
