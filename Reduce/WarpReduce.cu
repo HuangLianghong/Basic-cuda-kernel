@@ -11,6 +11,7 @@ __device__ T warpReduce(T data) {
     }
     return data;
 }
+
 // 蝶形规约
 template <typename T, const int kWarpSize = warpSize>
 __device__ T warpReduce_xor(T data){
@@ -18,6 +19,21 @@ __device__ T warpReduce_xor(T data){
         data += __shfl_xor_sync(0xffffffff, data, offset);
     }
     return data;
+}
+
+template <const int NUM_THREADS=128>
+__device__ float block_reduce_sum(float data){
+    constexpr NUM_WARPs = (NUM_THREADS+warpSize-1)/warpSize;
+    int warpId = threadIdx.x / warpSize;
+    int laneId = threadIdx.x % warpSize; 
+    __share__ float shm[NUM_WARPS];
+
+    data = warpReduce<NUM_THREADS>(data);
+    if(laneId==0) shm[warpId] = data;
+    __syncthreads();
+    val = (laneId<NUM_WARPS)? shm[laneId]:0;
+    val = warpReduce<NUM_WARPS>(val);
+    return val;
 }
 
 // 主要的reduce kernel
@@ -48,8 +64,6 @@ __global__ void reduceKernel(T* input, T* output, int size) {
     if(laneid == 0 && warpid ==0){
         printf("After shared memory shuffle: Block %d warp %d final value = %f\n", blockIdx.x,warpid, mySum);
     }
-
-
 }
 
 int main() {

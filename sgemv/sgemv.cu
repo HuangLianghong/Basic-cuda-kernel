@@ -38,9 +38,50 @@ __global__ void sgemvKernel_N32(T* matrix, T* vect, T* output, size_t M, size_t 
 
         if(laneId==0)output[current_row]=res;
     }
+}
+__global__ void prefixSum(float* ouput, float* input, int n){
+    __share__ float shm[BLOCK_SIZE];
+    int i = blockDim.x*blockIdx.x+threadIdx.x;
+    if(i < n){
+        shm[threadIdx.x] = input[i];
+    }
+    else{
+        shm[threadIdx.x] = 0.0f;
+    }
+
+    for(int stride = 1; stride < blockDim.x; stride *=2){
+        __syncthreads();
+        float tmp;
+        if(threadIdx.x >= stride){
+            tmp = shm[threadIdx.x] + shm[threadIdx-stride];
+        }
+        __syncthreads();
+        if(threadIdx.x >= stride){
+            shm[threadIdx.x] = tmp;
+        }
+    }
+    if(i < n)output[i] = shm[i];
+}
 
 
+__global__ void sgemv(float* matrix, float* vect, float* ans, int M, int N){
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
+    int bx = blockIdx.x;
+    int lane = tx % warpSize;
+    int m = bx*blockDim.y+ty;
 
+    if(m<M){
+        float sum = 0.0f;
+        int kIteration = N/warpSize;
+        if(kIteration ==0) kIteration = 1;
+        for(int i =0; i< kIteration;++i){
+            int current_col = i*warpSize+laneId;
+            sum += matrix[m*N+current_col]*vect[current_col];
+        }
+        sum += warpReduce<warpSize>(sum);
+    }
+    if(lane == 0) ans[m] == sum;
 }
 
 int main() {
